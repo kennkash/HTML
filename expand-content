@@ -25,8 +25,10 @@ text-align: left !important; / Aligns the button text to the left /
 white-space: normal !important; / Ensures the text wraps normally /
 overflow-wrap: break-word !important; / Allows long words to be broken and wrapped onto the next line /
 display: flex !important; / Uses flexbox to align items /
-align-items: flex-start !important; / Vertically centers the icon and text /
+flex-wrap: wrap !important; / Allows the icon and text to wrap together */
+align-items: center !important; / Vertically centers the icon and text /
 justify-content: flex-start !important; / Ensures the button content starts at the beginning */
+width: 100% !important; / Makes the trigger span the container so height grows with wrapped text */
 }
 
 /* Apply Samsung font & background to content within the expand /
@@ -38,15 +40,10 @@ font-family: SamsungOne;
 font-size: 16px;
 }
 
-/* Makes the grey background on the content within the expand the width of the page /
-.drop .expand-content {
-margin: 0 1720px 10px 20px !important; / Large right margin */
-padding: 16px 17px 15px 15px !important;
-}
-
-/* Adds a top margin to the content within the expand /
+/* Ensure the expand content has consistent spacing on all screen sizes */
+.drop .expand-content,
 .drop2 .expand-content {
-margin: 65px 0 10px 20px !important; / Creates space between the long expand title and the content */
+margin: 10px 20px !important;
 padding: 16px 17px 15px 15px !important;
 }
 
