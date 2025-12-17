@@ -4,6 +4,36 @@ from pathlib import Path
 
 cu = ConsoleUtils(theme="dark", verbosity=2)
 
+
+def coalesce_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    If df has duplicate column names (common with 'Unnamed:*' from CSV),
+    coalesce duplicates by taking the first non-null value across the duplicate
+    columns, and keep only one column with the original name.
+    """
+    cols = list(df.columns)
+    seen = set()
+    out = pd.DataFrame(index=df.index)
+
+    # Precompute which labels are duplicated
+    col_index = pd.Index(cols)
+    duplicated_labels = {c for c in col_index.unique() if (col_index == c).sum() > 1}
+
+    for c in cols:
+        if c in seen:
+            continue
+        seen.add(c)
+
+        if c in duplicated_labels:
+            # df.loc[:, c] returns a DataFrame when c is duplicated
+            block = df.loc[:, c]
+            # take first non-null from left to right
+            out[c] = block.bfill(axis=1).iloc[:, 0]
+        else:
+            out[c] = df[c]
+
+    return out
+
 # ------------------------------------------------------------------
 # CSV Paths
 # ------------------------------------------------------------------
