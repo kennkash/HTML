@@ -187,11 +187,15 @@ email_to_groups = (
 mismatch_sync["ATTR_EMAIL"] = mismatch_sync["ATTR_EMAIL"].astype(str).str.strip().str.lower()
 
 def _is_filled(v) -> bool:
-    if pd.isna(v):
-        return False
-    s = str(v).strip()
-    return s != ""
+    # Handle scalar values
+    if not isinstance(v, pd.Series):
+        if pd.isna(v):
+            return False
+        return str(v).strip() != ""
 
+    # Handle Series (duplicate columns case)
+    return v.notna().any()
+    
 def _max_unnamed_num(existing_cols):
     max_n = -1
     for c in existing_cols:
