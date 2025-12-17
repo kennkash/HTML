@@ -1,14 +1,183 @@
+import pandas as pd
+from prettiprint import ConsoleUtils
+from pathlib import Path
+cu = ConsoleUtils(theme="dark", verbosity=2)
+# pd.set_option('display.max_columns', 12) 
+pd.reset_option('display.max_columns')
+# ------------------------------------------------------------------
+# CSV Paths
+# ------------------------------------------------------------------
+
+gad_path  = "/mnt/k.kashmiry/zdrive/conf_gad_users.csv"
+ldap_path = "/mnt/k.kashmiry/zdrive/conf_ldap_users.csv"
+user_sync = "/mnt/k.kashmiry/zdrive/CONFUSERSYNC.csv"
+gad_groups = "/mnt/k.kashmiry/zdrive/gad_groups.csv"
+
+# ------------------------------------------------------------------
+# Load the CSVs
+# ------------------------------------------------------------------
+
+gad_users  = pd.read_csv(gad_path)
+ldap_users = pd.read_csv(ldap_path)
+sync = pd.read_csv(user_sync, dtype=str, low_memory=False)
+gad_groups_df = pd.read_csv(gad_groups, dtype=str, low_memory=False)
+
+# ------------------------------------------------------------------
+# Normalise the columns we will compare
+# ------------------------------------------------------------------
+# ---- e‑mail -------------------------------------------------------
+
+gad_users["email_address"] = (
+    gad_users["email_address"]
+    .astype(str)          # protect against NaN
+    .str.strip()
+    .str.lower()
+)
+
+ldap_users["EMAIL"] = (
+    ldap_users["EMAIL"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+)
+
+# ---- user‑name ----------------------------------------------------
+# LDAP column is USER_NAME, GAD column is user_name
+ldap_users["USER_NAME"] = (
+    ldap_users["USER_NAME"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+)
+
+gad_users["user_name"] = (
+    gad_users["user_name"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+)
+
+# ---- e‑mail -------------------------------------------------------
+sync["ATTR_EMAIL"] = sync["ATTR_EMAIL"].astype(str).str.strip().str.lower()
+
+# ---- e‑mail/group_name -------------------------------------------------------
+gad_groups_df["email_add"] = gad_groups_df["email_add"].astype(str).str.strip().str.lower()
+gad_groups_df["group_name"] = gad_groups_df["group_name"].astype(str).str.strip()
+
+# ------------------------------------------------------------------
+# LDAP rows **missing** from GAD (first requirement)
+# ------------------------------------------------------------------
+
+ldap_missing_in_gad = ldap_users[
+    ~ldap_users["EMAIL"].isin(gad_users["email_address"])
+].copy()
+
+
+cu.header("Finding Users Not in GAD...")
+cu.key_value("LDAP‑Only Rows (users not in GAD):", f"{len(ldap_missing_in_gad)}")
+print(ldap_missing_in_gad)
+
+# cu.table(
+#     headers=list(ldap_missing_in_gad.columns),
+#     rows=ldap_missing_in_gad.values.tolist(),
+#     title="Users not in GAD",
+#     header_style="bold purple",
+#     expand=True,
+#     table_box=box.ROUNDED,
+# )
+
+# ------------------------------------------------------------------
+# Filter the Raw User Sync file to the users missing in GAD
+# ------------------------------------------------------------------
+
+cu.header("Filtering the Raw User Sync File to Users Missing in GAD")
+
+missing_set = set(ldap_missing_in_gad["EMAIL"])
+filtered_sync = sync[sync["ATTR_EMAIL"].isin(missing_set)].copy()
+
+cu.key_value("Users Missing in GAD:", f"{len(filtered_sync)}")
+print(filtered_sync)
+
+# ------------------------------------------------------------------
+# Filter the Raw User Sync file to only users who have logged in
+# ------------------------------------------------------------------
+cu.header("Filtering the Filtered User Sync File to Users Who Have Logged In")
+
+col = "ATTR_CONFLUENCE_LAST_AUTHENTICATED"
+
+cu.key_value("Users Who Have Never Logged In:", f"{filtered_sync[col].isna().sum()}")
+
+logged_in_filtered_sync = filtered_sync[filtered_sync[col].notna()].copy()
+
+cu.key_value("Rows Kept After Removing Null Logins", f"{len(logged_in_filtered_sync)}")
+print(logged_in_filtered_sync)
+
+# ------------------------------------------------------------------
+# Same e‑mail in both, but different usernames (second requirement)
+# ------------------------------------------------------------------
+# Inner merge on the e‑mail column, keeping both username columns side‑by‑side
+
+cu.header("Finding Users that Exist in Both LDAP & GAD")
+
+merged = pd.merge(
+    ldap_users,
+    gad_users,
+    left_on="EMAIL",
+    right_on="email_address",
+    how="inner",
+    suffixes=("_ldap", "_gad")   # creates USER_NAME_ldap and user_name_gad
+)
+
+
+cu.panel("Finding Duplicate Users With Different Usernames", expand=False)
+
+# Keep only the rows where the usernames differ
+username_mismatch = merged[
+    merged["USER_NAME"] != merged["user_name"]
+][["EMAIL", "USER_NAME", "user_name"]].reset_index(drop=True)
+
+
+cu.key_value("Username Mismatches (same email, different usernames):", f"{len(username_mismatch)}")
+print(username_mismatch)
+
+# cu.table(
+#     headers=list(username_mismatch.columns),
+#     rows=username_mismatch.values.tolist(),
+#     title="Duplicate users with username mismatch",
+#     header_style="bold purple",
+#     expand=True,
+#     table_box=box.ROUNDED,
+# )
+
+# ------------------------------------------------------------------
+# Filter the Raw User Sync file to duplicate users, 
+# replace username with username being used in GAD Directory
+# ------------------------------------------------------------------
+cu.header("Filtering the Raw User Sync File to Users Who Have An Account in Both Directories")
+
+# clean keys
+sync["ATTR_EMAIL"]   = sync["ATTR_EMAIL"].str.lower().str.strip()
+username_mismatch["EMAIL"] = username_mismatch["EMAIL"].str.lower().str.strip()
+
+# keep only rows that belong to the mismatch set
+mismatch_emails = set(username_mismatch["EMAIL"])
+mismatch_sync = sync[sync["ATTR_EMAIL"].isin(mismatch_emails)].copy()
+
+cu.panel("Raw Sync Data of Duplicate Users", expand=False)
+print(mismatch_sync)
+
+# replace the name
+lookup = username_mismatch.set_index("EMAIL")["user_name"]
+mismatch_sync["ATTR_NAME"] = mismatch_sync["ATTR_EMAIL"].map(lookup)
+
+cu.panel("Raw Sync Data of Duplicate Users - Updated Usernames", expand=False)
+print(mismatch_sync)
+
 # ------------------------------------------------------------------
 # Append GAD groups (gad_groups.csv) into the "Unnamed" group columns
 # between ATTR_GROUPS and ATTR_USER_KEY for mismatch_sync
 # ------------------------------------------------------------------
 cu.header("Appending GAD Groups for Duplicate Users (mismatch_sync)")
-
-gad_groups_df = pd.read_csv(gad_groups, dtype=str, low_memory=False)
-
-# normalize
-gad_groups_df["email_add"] = gad_groups_df["email_add"].astype(str).str.strip().str.lower()
-gad_groups_df["group_name"] = gad_groups_df["group_name"].astype(str).str.strip()
 
 # map: email -> [group1, group2, ...]
 email_to_groups = (
@@ -100,3 +269,46 @@ for row_idx in mismatch_sync.index:
 mismatch_sync = mismatch_sync.copy()
 
 cu.success("Finished appending GAD groups into mismatch_sync.")
+
+
+
+# remove possible duplicates from the already‑filtered set
+remaining_logged = logged_in_filtered_sync[~logged_in_filtered_sync["ATTR_EMAIL"].isin(mismatch_emails)]
+cu.key_value("Users in previously filtered rows:", f"{len(remaining_logged)}")
+
+# final concatenation
+final_sync = pd.concat([remaining_logged, mismatch_sync], ignore_index=True).drop_duplicates("ATTR_EMAIL")
+cu.key_value("Final Count of Users to be Imported:", f"{len(final_sync)}")
+cu.spacer()
+cu.panel(f"{len(remaining_logged + mismatch_sync)}", title="Final Count Check (user count should equal this):", box="DOUBLE", border_style="bold red", padding=1)
+# ------------------------------------------------------------------
+# Save the results
+# ------------------------------------------------------------------
+# ldap_missing_in_gad.to_csv("/mnt/k.kashmiry/zdrive/ldap_missing_in_gad.csv", index=False)
+# username_mismatch.to_csv("/mnt/k.kashmiry/zdrive/email_username_mismatches.csv", index=False)
+
+# --------------------------------------------------------------
+# Path where the workbook should be saved
+# --------------------------------------------------------------
+out_folder = Path("/mnt/k.kashmiry/zdrive")
+out_file   = out_folder / "final_sync_test.xlsx"     
+
+# --------------------------------------------------------------
+# Make sure the directory exists (mkdir with parents=True is safe)
+# --------------------------------------------------------------
+out_folder.mkdir(parents=True, exist_ok=True)
+
+# --------------------------------------------------------------
+# Save the DataFrame as an Excel workbook
+# --------------------------------------------------------------
+final_sync.to_excel(
+    out_file,
+    index=False,          # do not write the pandas index as a column
+    engine="openpyxl"     # optional – explicit engine declaration
+)
+
+cu.success(f"Excel file written to: {out_file}")
+cu.info(f"File size: {out_file.stat().st_size / 1_024:.1f} KiB")
+cu.header("Sample of the written file:")
+print(final_sync.head())
+
