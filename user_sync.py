@@ -50,6 +50,22 @@ def _next_unnamed_name(existing_cols):
             except Exception:
                 pass
     return f"Unnamed: {max_n + 1}"
+    
+# ------------------------------------------------------------------
+# FIX: If the raw sync has Unnamed:* columns AFTER ATTR_USER_KEY,
+# move them to immediately BEFORE ATTR_USER_KEY so NO groups live after it.
+# ------------------------------------------------------------------
+cols = list(mismatch_sync.columns)
+i_user_key = cols.index("ATTR_USER_KEY")
+
+unnamed_after = [c for c in cols[i_user_key+1:] if isinstance(c, str) and c.startswith("Unnamed:")]
+if unnamed_after:
+    cu.info(f"Moving {len(unnamed_after)} Unnamed columns from after ATTR_USER_KEY to before it.")
+    cols_before_user_key = cols[:i_user_key]
+    cols_after_user_key = [c for c in cols[i_user_key+1:] if c not in unnamed_after]
+
+    new_order = cols_before_user_key + unnamed_after + ["ATTR_USER_KEY"] + cols_after_user_key
+    mismatch_sync = mismatch_sync.reindex(columns=new_order)
 
 # Append groups row-by-row; any needed new columns are inserted BEFORE ATTR_USER_KEY
 for row_idx in mismatch_sync.index:
