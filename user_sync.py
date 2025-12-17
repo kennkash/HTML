@@ -341,6 +341,10 @@ cu.key_value("Users in previously filtered rows:", f"{len(remaining_logged)}")
 # ------------------------------------------------------------------
 # final concatenation
 # ------------------------------------------------------------------
+# Fix duplicate column-name issue before concat (prevents "reindexing only valid..." error)
+remaining_logged = coalesce_duplicate_columns(remaining_logged)
+mismatch_sync = coalesce_duplicate_columns(mismatch_sync)
+
 final_sync = (
     pd.concat([remaining_logged, mismatch_sync], ignore_index=True)
     .drop_duplicates("ATTR_EMAIL")
