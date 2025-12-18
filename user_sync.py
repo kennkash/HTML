@@ -1,120 +1,3 @@
-# ------------------------------------------------------------------
-# Append GAD groups (gad_groups.csv) into the "Unnamed" group columns
-# between ATTR_GROUPS and ATTR_USER_KEY for mismatch_sync
-# ------------------------------------------------------------------
-cu.header("Appending GAD Groups for Duplicate Users (mismatch_sync)")
-
-# map: email -> [group1, group2, ...]
-email_to_groups = (
-    gad_groups_df.dropna(subset=["email_add", "group_name"])
-    .groupby("email_add")["group_name"]
-    .apply(list)
-    .to_dict()
-)
-
-# Ensure email key is normalized in mismatch_sync
-mismatch_sync["ATTR_EMAIL"] = mismatch_sync["ATTR_EMAIL"].astype(str).str.strip().str.lower()
-
-# Identify the "group columns" slice: from ATTR_GROUPS up to (but excluding) ATTR_USER_KEY
-cols = list(mismatch_sync.columns)
-try:
-    i_groups = cols.index("ATTR_GROUPS")
-    i_user_key = cols.index("ATTR_USER_KEY")
-except ValueError as e:
-    raise ValueError(
-        "Could not find required columns in mismatch_sync. "
-        "Expected to find 'ATTR_GROUPS' and 'ATTR_USER_KEY'."
-    ) from e
-
-def _is_filled(v) -> bool:
-    if pd.isna(v):
-        return False
-    s = str(v).strip()
-    return s != ""
-
-# ------------------------------------------------------------------
-# PRE-CALCULATE: How many total group columns do we need?
-# ------------------------------------------------------------------
-max_groups_needed = 0
-for row_idx in mismatch_sync.index:
-    email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
-    new_groups = email_to_groups.get(email, [])
-    
-    if not new_groups:
-        continue
-    
-    # Count existing filled columns for this row
-    group_cols = cols[i_groups:i_user_key]
-    last_filled_pos = -1
-    for j, c in enumerate(group_cols):
-        if _is_filled(mismatch_sync.at[row_idx, c]):
-            last_filled_pos = j
-    
-    # Start position (never overwrite ATTR_GROUPS itself)
-    start_pos = max(last_filled_pos + 1, 1)
-    needed = start_pos + len(new_groups)
-    max_groups_needed = max(max_groups_needed, needed)
-
-# ------------------------------------------------------------------
-# CREATE ALL NEEDED COLUMNS AT ONCE (before ATTR_USER_KEY)
-# ------------------------------------------------------------------
-current_group_cols = i_user_key - i_groups
-if max_groups_needed > current_group_cols:
-    cols_to_add = max_groups_needed - current_group_cols
-    
-    # Find the current max "Unnamed: N"
-    max_n = -1
-    for c in mismatch_sync.columns:
-        if isinstance(c, str) and c.startswith("Unnamed:"):
-            try:
-                n = int(c.split(":", 1)[1].strip())
-                max_n = max(max_n, n)
-            except Exception:
-                pass
-    
-    # Insert all needed columns at once, right before ATTR_USER_KEY
-    insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
-    for i in range(cols_to_add):
-        new_col = f"Unnamed: {max_n + 1 + i}"
-        mismatch_sync.insert(insert_at + i, new_col, pd.NA)
-
-# ------------------------------------------------------------------
-# NOW FILL IN THE GROUPS (no more column insertions)
-# ------------------------------------------------------------------
-# Refresh column indices after insertions
-cols = list(mismatch_sync.columns)
-i_groups = cols.index("ATTR_GROUPS")
-i_user_key = cols.index("ATTR_USER_KEY")
-group_cols = cols[i_groups:i_user_key]
-
-for row_idx in mismatch_sync.index:
-    email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
-    new_groups = email_to_groups.get(email, [])
-
-    if not new_groups:
-        continue
-
-    # Find the last filled group column for THIS ROW
-    last_filled_pos = -1
-    for j, c in enumerate(group_cols):
-        if _is_filled(mismatch_sync.at[row_idx, c]):
-            last_filled_pos = j
-
-    # Start writing after the last filled position (min position 1 to skip ATTR_GROUPS)
-    start_pos = max(last_filled_pos + 1, 1)
-
-    # Write groups into the next available slots
-    for k, g in enumerate(new_groups):
-        target_col = group_cols[start_pos + k]
-        mismatch_sync.at[row_idx, target_col] = g
-
-# Defragment after modifications
-mismatch_sync = mismatch_sync.copy()
-
-cu.success("Finished appending GAD groups into mismatch_sync.")
-
-
-
 import pandas as pd
 from prettiprint import ConsoleUtils
 from pathlib import Path
@@ -319,25 +202,66 @@ except ValueError as e:
     ) from e
 
 def _is_filled(v) -> bool:
-    # FIX: treat pandas NA/NaN as empty
     if pd.isna(v):
         return False
     s = str(v).strip()
     return s != ""
 
-def _next_unnamed_name(existing_cols):
-    # Find the max "Unnamed: N" currently present; start after it
+# ------------------------------------------------------------------
+# PRE-CALCULATE: How many total group columns do we need?
+# ------------------------------------------------------------------
+max_groups_needed = 0
+for row_idx in mismatch_sync.index:
+    email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
+    new_groups = email_to_groups.get(email, [])
+    
+    if not new_groups:
+        continue
+    
+    # Count existing filled columns for this row
+    group_cols = cols[i_groups:i_user_key]
+    last_filled_pos = -1
+    for j, c in enumerate(group_cols):
+        if _is_filled(mismatch_sync.at[row_idx, c]):
+            last_filled_pos = j
+    
+    # Start position (never overwrite ATTR_GROUPS itself)
+    start_pos = max(last_filled_pos + 1, 1)
+    needed = start_pos + len(new_groups)
+    max_groups_needed = max(max_groups_needed, needed)
+
+# ------------------------------------------------------------------
+# CREATE ALL NEEDED COLUMNS AT ONCE (before ATTR_USER_KEY)
+# ------------------------------------------------------------------
+current_group_cols = i_user_key - i_groups
+if max_groups_needed > current_group_cols:
+    cols_to_add = max_groups_needed - current_group_cols
+    
+    # Find the current max "Unnamed: N"
     max_n = -1
-    for c in existing_cols:
+    for c in mismatch_sync.columns:
         if isinstance(c, str) and c.startswith("Unnamed:"):
             try:
                 n = int(c.split(":", 1)[1].strip())
                 max_n = max(max_n, n)
             except Exception:
                 pass
-    return f"Unnamed: {max_n + 1}"
+    
+    # Insert all needed columns at once, right before ATTR_USER_KEY
+    insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
+    for i in range(cols_to_add):
+        new_col = f"Unnamed: {max_n + 1 + i}"
+        mismatch_sync.insert(insert_at + i, new_col, pd.NA)
 
-# Append groups row-by-row; any needed new columns are inserted BEFORE ATTR_USER_KEY
+# ------------------------------------------------------------------
+# NOW FILL IN THE GROUPS (no more column insertions)
+# ------------------------------------------------------------------
+# Refresh column indices after insertions
+cols = list(mismatch_sync.columns)
+i_groups = cols.index("ATTR_GROUPS")
+i_user_key = cols.index("ATTR_USER_KEY")
+group_cols = cols[i_groups:i_user_key]
+
 for row_idx in mismatch_sync.index:
     email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
     new_groups = email_to_groups.get(email, [])
@@ -345,44 +269,21 @@ for row_idx in mismatch_sync.index:
     if not new_groups:
         continue
 
-    # Recompute after any prior inserts
-    cols = list(mismatch_sync.columns)
-    i_groups = cols.index("ATTR_GROUPS")
-    i_user_key = cols.index("ATTR_USER_KEY")
-    group_cols = cols[i_groups:i_user_key]  # STRICTLY between ATTR_GROUPS and ATTR_USER_KEY
-
-    # Find the last filled group column for THIS ROW ONLY
+    # Find the last filled group column for THIS ROW
     last_filled_pos = -1
     for j, c in enumerate(group_cols):
         if _is_filled(mismatch_sync.at[row_idx, c]):
             last_filled_pos = j
 
-    # FIX: always start writing into the first Unnamed column (never overwrite ATTR_GROUPS itself)
+    # Start writing after the last filled position (min position 1 to skip ATTR_GROUPS)
     start_pos = max(last_filled_pos + 1, 1)
 
-    # Ensure enough columns exist BETWEEN ATTR_GROUPS and ATTR_USER_KEY
-    needed_len = start_pos + len(new_groups)
-    if needed_len > len(group_cols):
-        to_add = needed_len - len(group_cols)
-        for _ in range(to_add):
-            new_col = _next_unnamed_name(mismatch_sync.columns)
-
-            # Insert immediately BEFORE ATTR_USER_KEY (so groups never appear after it)
-            insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
-            mismatch_sync.insert(insert_at, new_col, pd.NA)
-
-        # refresh slice after inserting
-        cols = list(mismatch_sync.columns)
-        i_groups = cols.index("ATTR_GROUPS")
-        i_user_key = cols.index("ATTR_USER_KEY")
-        group_cols = cols[i_groups:i_user_key]
-
-    # Write groups into the next available slots BETWEEN ATTR_GROUPS and ATTR_USER_KEY
+    # Write groups into the next available slots
     for k, g in enumerate(new_groups):
         target_col = group_cols[start_pos + k]
         mismatch_sync.at[row_idx, target_col] = g
 
-# Defragment after many inserts (avoids the fragmentation warning)
+# Defragment after modifications
 mismatch_sync = mismatch_sync.copy()
 
 cu.success("Finished appending GAD groups into mismatch_sync.")
@@ -429,3 +330,28 @@ cu.info(f"File size: {out_file.stat().st_size / 1_024:.1f} KiB")
 cu.header("Sample of the written file:")
 print(final_sync.head())
 
+
+
+
+
+
+
+# logged_in_filtered_sync[col] = pd.to_datetime(
+#     logged_in_filtered_sync[col].astype(float),  # cast to float/int first
+#     unit='ms'                          # epoch is in milliseconds
+# )
+
+# logged_in_filtered_sync = logged_in_filtered_sync[[col] + 
+#     [c for c in logged_in_filtered_sync.columns if c != col]]
+
+# print(logged_in_filtered_sync.head(20))
+result_string = "(" + ", ".join(f"'{n}'" for n in 
+    username_mismatch["user_name"]
+    .astype(str)
+    .str.strip()
+    .replace("", pd.NA)
+    .dropna()
+    .unique()
+) + ")"
+
+print(result_string)
