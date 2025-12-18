@@ -193,3 +193,42 @@ for col in cols_after_user_key:
     non_null = mismatch_sync[col].notna().sum()
     if non_null > 0:
         cu.error(f"WARNING: Column '{col}' after ATTR_USER_KEY has {non_null} non-null values!")
+
+
+
+
+Max groups needed: 509
+ℹ️ Most demanding rows: [{'row_idx': 1491, 'email': 'user1@samsung.com', 'last_filled': 4, 'start_pos': 5, 'new_groups_count': 51, 'needed': 56}, {'row_idx': 1861, 'email':
+'user2@samsung.com', 'last_filled': 8, 'start_pos': 9, 'new_groups_count': 52, 'needed': 61}, {'row_idx': 1914, 'email': 'john.doe@samsung.com', 'last_filled': 11, 
+'start_pos': 12, 'new_groups_count': 497, 'needed': 509}]
+ℹ️ Need to add 333 new columns
+ℹ️ Added 333 new columns before ATTR_USER_KEY
+ℹ️ Total group columns available: 509
+ℹ️ ATTR_GROUPS at position: 4
+ℹ️ ATTR_USER_KEY at position: 513
+ℹ️ First 5 group cols: ['ATTR_GROUPS', 'Unnamed: 5', 'Unnamed: 6', 'Unnamed: 7', 'Unnamed: 8']
+ℹ️ Last 5 group cols: ['Unnamed: 508', 'Unnamed: 509', 'Unnamed: 510', 'Unnamed: 511', 'Unnamed: 512']
+✅ Filled 3193 group values into mismatch_sync.
+✅ Finished appending GAD groups into mismatch_sync.
+ℹ️ Final verification: ATTR_USER_KEY at position 513
+❌ WARNING: Column 'ATTR_PROFILE_PICTURE_FILENAME' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'ATTR_IS_SYSADMIN' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'autoGroupsAdded' after ATTR_USER_KEY has 14 non-null values!
+❌ WARNING: Column 'invalidPasswordAttempts' after ATTR_USER_KEY has 12 non-null values!
+❌ WARNING: Column 'ATTR_CONFLUENCE_LAST_AUTHENTICATED' after ATTR_USER_KEY has 25 non-null values!
+❌ WARNING: Column 'ATTR_LASTNAME' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'ATTR_IS_ADMIN' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'ATTR_LAST_KNOWN_ACTIVITY' after ATTR_USER_KEY has 25 non-null values!
+❌ WARNING: Column 'ATLAS_USER_TIMESTAMP' after ATTR_USER_KEY has 4 non-null values!
+❌ WARNING: Column 'CONFLUENCE.UD.position' after ATTR_USER_KEY has 1 non-null values!
+❌ WARNING: Column 'ATTR_FIRSTNAME' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'CONFLUENCE.UD.department' after ATTR_USER_KEY has 1 non-null values!
+❌ WARNING: Column 'ATTR_IS_IGNORE_ACTIVE_ON_UPDATE' after ATTR_USER_KEY has 4 non-null values!
+❌ WARNING: Column 'CONFLUENCE.UD.location' after ATTR_USER_KEY has 1 non-null values!
+❌ WARNING: Column 'lastAuthenticated' after ATTR_USER_KEY has 13 non-null values!
+❌ WARNING: Column 'ATTR_ID' after ATTR_USER_KEY has 123 non-null values!
+❌ WARNING: Column 'ATTR_LAST_AUTH_CONSOLIDATED' after ATTR_USER_KEY has 25 non-null values!
+Users in previously filtered rows:: 293
+Final Count of Users to be Imported:: 416
+
+
