@@ -190,19 +190,31 @@ email_to_groups = (
 # Ensure email key is normalized in mismatch_sync
 mismatch_sync["ATTR_EMAIL"] = mismatch_sync["ATTR_EMAIL"].astype(str).str.strip().str.lower()
 
-# Identify the "group columns" slice: from ATTR_GROUPS up to (but excluding) ATTR_USER_KEY
-cols = list(mismatch_sync.columns)
-try:
-    i_groups = cols.index("ATTR_GROUPS")
-    i_user_key = cols.index("ATTR_USER_KEY")
-except ValueError as e:
-    raise ValueError(
-        "Could not find required columns in mismatch_sync. "
-        "Expected to find 'ATTR_GROUPS' and 'ATTR_USER_KEY'."
-    ) from e
+def _locate_group_columns(df: pd.DataFrame):
+    """Return indexes and names for group columns.
+
+    Groups live in ATTR_GROUPS plus any "Unnamed: N" columns that appear *after*
+    ATTR_GROUPS but before ATTR_USER_KEY. Named columns in that slice are skipped,
+    keeping group writes away from unrelated attributes.
+    """
+
+    cols = list(df.columns)
+    try:
+        i_groups = cols.index("ATTR_GROUPS")
+        i_user_key = cols.index("ATTR_USER_KEY")
+    except ValueError as e:
+        raise ValueError(
+            "Could not find required columns in mismatch_sync. "
+            "Expected to find 'ATTR_GROUPS' and 'ATTR_USER_KEY'."
+        ) from e
+
+    between = cols[i_groups + 1 : i_user_key]
+    unnamed_between = [c for c in between if isinstance(c, str) and c.startswith("Unnamed:")]
+
+    # ATTR_GROUPS is always the anchor, followed by the discovered Unnamed columns
+    return i_groups, i_user_key, ["ATTR_GROUPS", *unnamed_between]
 
 def _is_filled(v) -> bool:
-    # FIX: treat pandas NA/NaN as empty
     if pd.isna(v):
         return False
     s = str(v).strip()
@@ -228,37 +240,27 @@ for row_idx in mismatch_sync.index:
     if not new_groups:
         continue
 
-    # Recompute after any prior inserts
-    cols = list(mismatch_sync.columns)
-    i_groups = cols.index("ATTR_GROUPS")
-    i_user_key = cols.index("ATTR_USER_KEY")
-    group_cols = cols[i_groups:i_user_key]  # STRICTLY between ATTR_GROUPS and ATTR_USER_KEY
+    _, _, group_cols = _locate_group_columns(mismatch_sync)
 
-    # Find the last filled group column for THIS ROW ONLY
+    # Find the last filled group column for THIS ROW ONLY (considering only the group columns)
     last_filled_pos = -1
     for j, c in enumerate(group_cols):
         if _is_filled(mismatch_sync.at[row_idx, c]):
             last_filled_pos = j
 
-    # FIX: always start writing into the first Unnamed column (never overwrite ATTR_GROUPS itself)
+    # Always start at least one column past ATTR_GROUPS
     start_pos = max(last_filled_pos + 1, 1)
 
-    # Ensure enough columns exist BETWEEN ATTR_GROUPS and ATTR_USER_KEY
-    needed_len = start_pos + len(new_groups)
-    if needed_len > len(group_cols):
-        to_add = needed_len - len(group_cols)
-        for _ in range(to_add):
-            new_col = _next_unnamed_name(mismatch_sync.columns)
+    # Ensure enough group columns exist BEFORE ATTR_USER_KEY
+    while start_pos + len(new_groups) > len(group_cols):
+        new_col = _next_unnamed_name(mismatch_sync.columns)
 
-            # Insert immediately BEFORE ATTR_USER_KEY (so groups never appear after it)
-            insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
-            mismatch_sync.insert(insert_at, new_col, pd.NA)
+        # Insert immediately BEFORE ATTR_USER_KEY (so groups never appear after it)
+        insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
+        mismatch_sync.insert(insert_at, new_col, pd.NA)
 
-        # refresh slice after inserting
-        cols = list(mismatch_sync.columns)
-        i_groups = cols.index("ATTR_GROUPS")
-        i_user_key = cols.index("ATTR_USER_KEY")
-        group_cols = cols[i_groups:i_user_key]
+        # Refresh the group column view after inserting
+        _, _, group_cols = _locate_group_columns(mismatch_sync)
 
     # Write groups into the next available slots BETWEEN ATTR_GROUPS and ATTR_USER_KEY
     for k, g in enumerate(new_groups):
@@ -280,7 +282,13 @@ cu.key_value("Users in previously filtered rows:", f"{len(remaining_logged)}")
 final_sync = pd.concat([remaining_logged, mismatch_sync], ignore_index=True).drop_duplicates("ATTR_EMAIL")
 cu.key_value("Final Count of Users to be Imported:", f"{len(final_sync)}")
 cu.spacer()
-cu.panel(f"{len(remaining_logged + mismatch_sync)}", title="Final Count Check (user count should equal this):", box="DOUBLE", border_style="bold red", padding=1)
+cu.panel(
+    f"{len(remaining_logged) + len(mismatch_sync)}",
+    title="Final Count Check (user count should equal this):",
+    box="DOUBLE",
+    border_style="bold red",
+    padding=1,
+)
 # ------------------------------------------------------------------
 # Save the results
 # ------------------------------------------------------------------
@@ -311,4 +319,3 @@ cu.success(f"Excel file written to: {out_file}")
 cu.info(f"File size: {out_file.stat().st_size / 1_024:.1f} KiB")
 cu.header("Sample of the written file:")
 print(final_sync.head())
-
