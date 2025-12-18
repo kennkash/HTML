@@ -36,6 +36,8 @@ def _is_filled(v) -> bool:
 # PRE-CALCULATE: How many total group columns do we need?
 # ------------------------------------------------------------------
 max_groups_needed = 0
+problematic_rows = []
+
 for row_idx in mismatch_sync.index:
     email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
     new_groups = email_to_groups.get(email, [])
@@ -53,7 +55,20 @@ for row_idx in mismatch_sync.index:
     # Start position (never overwrite ATTR_GROUPS itself)
     start_pos = max(last_filled_pos + 1, 1)
     needed = start_pos + len(new_groups)
-    max_groups_needed = max(max_groups_needed, needed)
+    
+    if needed > max_groups_needed:
+        max_groups_needed = needed
+        problematic_rows.append({
+            'row_idx': row_idx,
+            'email': email,
+            'last_filled': last_filled_pos,
+            'start_pos': start_pos,
+            'new_groups_count': len(new_groups),
+            'needed': needed
+        })
+
+cu.info(f"Max groups needed: {max_groups_needed}")
+cu.info(f"Most demanding rows: {problematic_rows[-3:]}")
 
 # ------------------------------------------------------------------
 # CREATE ALL NEEDED COLUMNS BY SPLITTING AND RECOMBINING THE DATAFRAME
@@ -76,10 +91,6 @@ if max_groups_needed > current_group_cols:
                 pass
     
     # Split the DataFrame into three parts:
-    # 1. Everything up to and including the last group column (before ATTR_USER_KEY)
-    # 2. New columns we're adding
-    # 3. ATTR_USER_KEY and everything after
-    
     cols_before = cols[:i_user_key]  # Everything before ATTR_USER_KEY
     cols_after = cols[i_user_key:]   # ATTR_USER_KEY and everything after
     
@@ -109,8 +120,14 @@ i_user_key = cols.index("ATTR_USER_KEY")
 group_cols = cols[i_groups:i_user_key]
 
 cu.info(f"Total group columns available: {len(group_cols)}")
-cu.info(f"ATTR_USER_KEY is now at position: {i_user_key}")
+cu.info(f"ATTR_GROUPS at position: {i_groups}")
+cu.info(f"ATTR_USER_KEY at position: {i_user_key}")
 
+# Show first and last few group column names
+cu.info(f"First 5 group cols: {group_cols[:5]}")
+cu.info(f"Last 5 group cols: {group_cols[-5:]}")
+
+filled_count = 0
 for row_idx in mismatch_sync.index:
     email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
     new_groups = email_to_groups.get(email, [])
@@ -129,25 +146,50 @@ for row_idx in mismatch_sync.index:
 
     # Verify we have enough columns
     if start_pos + len(new_groups) > len(group_cols):
-        cu.error(f"Row {row_idx}: Not enough group columns! Need {start_pos + len(new_groups)}, have {len(group_cols)}")
-        cu.error(f"Email: {email}, Groups to add: {len(new_groups)}, Start position: {start_pos}")
+        cu.error(f"Row {row_idx}: Not enough group columns!")
+        cu.error(f"  Email: {email}")
+        cu.error(f"  Last filled position: {last_filled_pos}")
+        cu.error(f"  Start position: {start_pos}")
+        cu.error(f"  Groups to add: {len(new_groups)}")
+        cu.error(f"  Need: {start_pos + len(new_groups)}, Have: {len(group_cols)}")
         raise ValueError(f"Insufficient group columns for row {row_idx}")
 
     # Write groups into the next available slots
     for k, g in enumerate(new_groups):
-        target_col = group_cols[start_pos + k]
+        target_idx = start_pos + k
+        target_col = group_cols[target_idx]
+        
+        # Extra verification: make sure target_col exists in mismatch_sync and is before ATTR_USER_KEY
+        if target_col not in mismatch_sync.columns:
+            cu.error(f"Target column '{target_col}' doesn't exist!")
+            raise ValueError(f"Column {target_col} not found")
+        
+        col_position = list(mismatch_sync.columns).index(target_col)
+        if col_position >= i_user_key:
+            cu.error(f"ERROR: Attempting to write to column '{target_col}' at position {col_position}, which is >= ATTR_USER_KEY position {i_user_key}")
+            cu.error(f"  Row: {row_idx}, Email: {email}")
+            cu.error(f"  Group index: {k}, Group: {g}")
+            cu.error(f"  Start pos: {start_pos}, Target idx: {target_idx}")
+            raise ValueError(f"Attempting to write past ATTR_USER_KEY")
+        
         mismatch_sync.at[row_idx, target_col] = g
+        filled_count += 1
+
+cu.success(f"Filled {filled_count} group values into mismatch_sync.")
 
 # Defragment after modifications
 mismatch_sync = mismatch_sync.copy()
 
 cu.success("Finished appending GAD groups into mismatch_sync.")
 
-# Verify the column order
-cu.info("Verifying column order...")
+# Final verification
 final_cols = list(mismatch_sync.columns)
-final_i_groups = final_cols.index("ATTR_GROUPS")
 final_i_user_key = final_cols.index("ATTR_USER_KEY")
-cu.info(f"ATTR_GROUPS at position: {final_i_groups}")
-cu.info(f"ATTR_USER_KEY at position: {final_i_user_key}")
-cu.info(f"Group columns between them: {final_i_user_key - final_i_groups}")
+cu.info(f"Final verification: ATTR_USER_KEY at position {final_i_user_key}")
+
+# Check if any columns after ATTR_USER_KEY have group data
+cols_after_user_key = final_cols[final_i_user_key+1:]
+for col in cols_after_user_key:
+    non_null = mismatch_sync[col].notna().sum()
+    if non_null > 0:
+        cu.error(f"WARNING: Column '{col}' after ATTR_USER_KEY has {non_null} non-null values!")
