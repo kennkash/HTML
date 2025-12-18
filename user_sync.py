@@ -83,9 +83,6 @@ if max_groups_needed > current_group_cols:
     cols_before = cols[:i_user_key]  # Everything before ATTR_USER_KEY
     cols_after = cols[i_user_key:]   # ATTR_USER_KEY and everything after
     
-    cu.info(f"Columns before ATTR_USER_KEY: {len(cols_before)}")
-    cu.info(f"Columns after ATTR_USER_KEY (including it): {len(cols_after)}")
-    
     df_before = mismatch_sync[cols_before].copy()
     df_after = mismatch_sync[cols_after].copy()
     
@@ -96,8 +93,6 @@ if max_groups_needed > current_group_cols:
         new_cols_dict[new_col_name] = pd.NA
     
     df_new = pd.DataFrame(new_cols_dict, index=mismatch_sync.index)
-    
-    cu.info(f"New columns created: {list(new_cols_dict.keys())[:5]} ... {list(new_cols_dict.keys())[-5:]}")
     
     # Concatenate: before + new + after
     mismatch_sync = pd.concat([df_before, df_new, df_after], axis=1)
@@ -154,7 +149,9 @@ mismatch_sync = mismatch_sync.copy()
 
 cu.success("Finished appending GAD groups into mismatch_sync.")
 
-# Final verification - check if new unnamed columns were created at the end
+# ------------------------------------------------------------------
+# CRITICAL CHECK: Look for unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED
+# ------------------------------------------------------------------
 final_cols = list(mismatch_sync.columns)
 final_i_user_key = final_cols.index("ATTR_USER_KEY")
 final_i_last_auth = final_cols.index("ATTR_LAST_AUTH_CONSOLIDATED") if "ATTR_LAST_AUTH_CONSOLIDATED" in final_cols else -1
@@ -169,12 +166,18 @@ if final_i_last_auth != -1:
     cols_after_last_auth = final_cols[final_i_last_auth+1:]
     unnamed_after = [c for c in cols_after_last_auth if isinstance(c, str) and c.startswith("Unnamed:")]
     if unnamed_after:
-        cu.error(f"ERROR: Found {len(unnamed_after)} unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED:")
-        cu.error(f"  {unnamed_after[:10]}")
+        cu.error(f"❌ ERROR: Found {len(unnamed_after)} unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED!")
+        cu.error(f"  First 10: {unnamed_after[:10]}")
         
         # Check if they have data
         for col in unnamed_after[:5]:
             non_null = mismatch_sync[col].notna().sum()
-            cu.error(f"  Column '{col}' has {non_null} non-null values")
+            if non_null > 0:
+                cu.error(f"  Column '{col}' has {non_null} non-null values")
+                # Show sample data
+                sample_data = mismatch_sync[mismatch_sync[col].notna()][col].head(3).tolist()
+                cu.error(f"    Sample values: {sample_data}")
     else:
-        cu.success("No unnamed columns found after ATTR_LAST_AUTH_CONSOLIDATED")
+        cu.success("✅ No unnamed columns found after ATTR_LAST_AUTH_CONSOLIDATED - Structure is correct!")
+else:
+    cu.error("Could not find ATTR_LAST_AUTH_CONSOLIDATED column")
