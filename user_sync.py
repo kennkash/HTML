@@ -56,8 +56,6 @@ for row_idx in mismatch_sync.index:
     needed = start_pos + len(new_groups)
     max_groups_needed = max(max_groups_needed, needed)
 
-cu.info(f"Max groups needed: {max_groups_needed}")
-
 # ------------------------------------------------------------------
 # CREATE ALL NEEDED COLUMNS BY SPLITTING AND RECOMBINING THE DATAFRAME
 # ------------------------------------------------------------------
@@ -65,9 +63,6 @@ current_group_cols = i_user_key - i_groups
 
 if max_groups_needed > current_group_cols:
     cols_to_add = max_groups_needed - current_group_cols
-    
-    cu.info(f"Current group columns: {current_group_cols}")
-    cu.info(f"Need to add {cols_to_add} new columns")
     
     # Find the current max "Unnamed: N"
     max_n = -1
@@ -96,8 +91,6 @@ if max_groups_needed > current_group_cols:
     
     # Concatenate: before + new + after
     mismatch_sync = pd.concat([df_before, df_new, df_after], axis=1)
-    
-    cu.info(f"Added {cols_to_add} new columns before ATTR_USER_KEY")
 
 # ------------------------------------------------------------------
 # NOW FILL IN THE GROUPS (no more column insertions)
@@ -108,11 +101,6 @@ i_groups = cols.index("ATTR_GROUPS")
 i_user_key = cols.index("ATTR_USER_KEY")
 group_cols = cols[i_groups:i_user_key]
 
-cu.info(f"Total group columns available: {len(group_cols)}")
-cu.info(f"ATTR_GROUPS at position: {i_groups}")
-cu.info(f"ATTR_USER_KEY at position: {i_user_key}")
-
-filled_count = 0
 for row_idx in mismatch_sync.index:
     email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
     new_groups = email_to_groups.get(email, [])
@@ -129,20 +117,10 @@ for row_idx in mismatch_sync.index:
     # Start writing after the last filled position (min position 1 to skip ATTR_GROUPS)
     start_pos = max(last_filled_pos + 1, 1)
 
-    # Verify we have enough columns
-    if start_pos + len(new_groups) > len(group_cols):
-        cu.error(f"Row {row_idx}: Not enough group columns!")
-        cu.error(f"  Email: {email}")
-        cu.error(f"  Need: {start_pos + len(new_groups)}, Have: {len(group_cols)}")
-        raise ValueError(f"Insufficient group columns for row {row_idx}")
-
     # Write groups into the next available slots
     for k, g in enumerate(new_groups):
         target_col = group_cols[start_pos + k]
         mismatch_sync.at[row_idx, target_col] = g
-        filled_count += 1
-
-cu.success(f"Filled {filled_count} group values into mismatch_sync.")
 
 # Defragment after modifications
 mismatch_sync = mismatch_sync.copy()
@@ -150,34 +128,39 @@ mismatch_sync = mismatch_sync.copy()
 cu.success("Finished appending GAD groups into mismatch_sync.")
 
 # ------------------------------------------------------------------
-# CRITICAL CHECK: Look for unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED
+# ALIGN COLUMNS before concatenation
 # ------------------------------------------------------------------
-final_cols = list(mismatch_sync.columns)
-final_i_user_key = final_cols.index("ATTR_USER_KEY")
-final_i_last_auth = final_cols.index("ATTR_LAST_AUTH_CONSOLIDATED") if "ATTR_LAST_AUTH_CONSOLIDATED" in final_cols else -1
+# Add missing columns to remaining_logged with NA values, maintaining column order
+mismatch_cols = list(mismatch_sync.columns)
 
-cu.info(f"Final verification:")
-cu.info(f"  ATTR_USER_KEY at position: {final_i_user_key}")
-cu.info(f"  ATTR_LAST_AUTH_CONSOLIDATED at position: {final_i_last_auth}")
-cu.info(f"  Total columns: {len(final_cols)}")
-
-# Check for any unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED
-if final_i_last_auth != -1:
-    cols_after_last_auth = final_cols[final_i_last_auth+1:]
-    unnamed_after = [c for c in cols_after_last_auth if isinstance(c, str) and c.startswith("Unnamed:")]
-    if unnamed_after:
-        cu.error(f"❌ ERROR: Found {len(unnamed_after)} unnamed columns after ATTR_LAST_AUTH_CONSOLIDATED!")
-        cu.error(f"  First 10: {unnamed_after[:10]}")
+for col in mismatch_cols:
+    if col not in remaining_logged.columns:
+        # Find the position where this column should be inserted
+        col_idx = mismatch_cols.index(col)
         
-        # Check if they have data
-        for col in unnamed_after[:5]:
-            non_null = mismatch_sync[col].notna().sum()
-            if non_null > 0:
-                cu.error(f"  Column '{col}' has {non_null} non-null values")
-                # Show sample data
-                sample_data = mismatch_sync[mismatch_sync[col].notna()][col].head(3).tolist()
-                cu.error(f"    Sample values: {sample_data}")
-    else:
-        cu.success("✅ No unnamed columns found after ATTR_LAST_AUTH_CONSOLIDATED - Structure is correct!")
-else:
-    cu.error("Could not find ATTR_LAST_AUTH_CONSOLIDATED column")
+        # Find the position in remaining_logged to insert (before the next column that exists)
+        insert_before = None
+        for next_col in mismatch_cols[col_idx+1:]:
+            if next_col in remaining_logged.columns:
+                insert_before = next_col
+                break
+        
+        if insert_before:
+            insert_at = list(remaining_logged.columns).index(insert_before)
+            remaining_logged.insert(insert_at, col, pd.NA)
+        else:
+            # Add at the end
+            remaining_logged[col] = pd.NA
+
+# Reorder remaining_logged to match mismatch_sync column order
+remaining_logged = remaining_logged[mismatch_sync.columns]
+
+# remove possible duplicates from the already‑filtered set
+remaining_logged = logged_in_filtered_sync[~logged_in_filtered_sync["ATTR_EMAIL"].isin(mismatch_emails)]
+cu.key_value("Users in previously filtered rows:", f"{len(remaining_logged)}")
+
+# final concatenation
+final_sync = pd.concat([remaining_logged, mismatch_sync], ignore_index=True).drop_duplicates("ATTR_EMAIL")
+cu.key_value("Final Count of Users to be Imported:", f"{len(final_sync)}")
+cu.spacer()
+cu.panel(f"{len(remaining_logged) + len(mismatch_sync)}", title="Final Count Check (user count should equal this):", box="DOUBLE", border_style="bold red", padding=1)
