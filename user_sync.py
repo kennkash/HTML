@@ -43,7 +43,7 @@ for row_idx in mismatch_sync.index:
     if not new_groups:
         continue
     
-    # Refresh cols for this row (in case columns were added in previous iterations)
+    # Refresh cols for this row
     current_cols = list(mismatch_sync.columns)
     current_i_groups = current_cols.index("ATTR_GROUPS")
     current_i_user_key = current_cols.index("ATTR_USER_KEY")
@@ -82,11 +82,13 @@ if max_groups_needed > current_group_cols:
             except Exception:
                 pass
     
-    # Insert all needed columns at once, right before ATTR_USER_KEY
-    insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
+    # CRITICAL FIX: Insert at the SAME position each time (right before ATTR_USER_KEY)
+    # because each insert shifts everything to the right
     for i in range(cols_to_add):
         new_col = f"Unnamed: {max_n + 1 + i}"
-        mismatch_sync.insert(insert_at + i, new_col, pd.NA)
+        # Always insert at the current position of ATTR_USER_KEY (it moves right with each insert)
+        insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
+        mismatch_sync.insert(insert_at, new_col, pd.NA)
     
     cu.info(f"Added {cols_to_add} new columns before ATTR_USER_KEY")
 
