@@ -43,13 +43,8 @@ for row_idx in mismatch_sync.index:
     if not new_groups:
         continue
     
-    # Refresh cols for this row
-    current_cols = list(mismatch_sync.columns)
-    current_i_groups = current_cols.index("ATTR_GROUPS")
-    current_i_user_key = current_cols.index("ATTR_USER_KEY")
-    group_cols = current_cols[current_i_groups:current_i_user_key]
-    
     # Count existing filled columns for this row
+    group_cols = cols[i_groups:i_user_key]
     last_filled_pos = -1
     for j, c in enumerate(group_cols):
         if _is_filled(mismatch_sync.at[row_idx, c]):
@@ -61,16 +56,14 @@ for row_idx in mismatch_sync.index:
     max_groups_needed = max(max_groups_needed, needed)
 
 # ------------------------------------------------------------------
-# CREATE ALL NEEDED COLUMNS AT ONCE (before ATTR_USER_KEY)
+# CREATE ALL NEEDED COLUMNS BY SPLITTING AND RECOMBINING THE DATAFRAME
 # ------------------------------------------------------------------
-# Refresh column indices
-cols = list(mismatch_sync.columns)
-i_groups = cols.index("ATTR_GROUPS")
-i_user_key = cols.index("ATTR_USER_KEY")
 current_group_cols = i_user_key - i_groups
 
 if max_groups_needed > current_group_cols:
     cols_to_add = max_groups_needed - current_group_cols
+    
+    cu.info(f"Need to add {cols_to_add} new columns")
     
     # Find the current max "Unnamed: N"
     max_n = -1
@@ -82,13 +75,27 @@ if max_groups_needed > current_group_cols:
             except Exception:
                 pass
     
-    # CRITICAL FIX: Insert at the SAME position each time (right before ATTR_USER_KEY)
-    # because each insert shifts everything to the right
+    # Split the DataFrame into three parts:
+    # 1. Everything up to and including the last group column (before ATTR_USER_KEY)
+    # 2. New columns we're adding
+    # 3. ATTR_USER_KEY and everything after
+    
+    cols_before = cols[:i_user_key]  # Everything before ATTR_USER_KEY
+    cols_after = cols[i_user_key:]   # ATTR_USER_KEY and everything after
+    
+    df_before = mismatch_sync[cols_before].copy()
+    df_after = mismatch_sync[cols_after].copy()
+    
+    # Create new columns with NA values
+    new_cols_dict = {}
     for i in range(cols_to_add):
-        new_col = f"Unnamed: {max_n + 1 + i}"
-        # Always insert at the current position of ATTR_USER_KEY (it moves right with each insert)
-        insert_at = list(mismatch_sync.columns).index("ATTR_USER_KEY")
-        mismatch_sync.insert(insert_at, new_col, pd.NA)
+        new_col_name = f"Unnamed: {max_n + 1 + i}"
+        new_cols_dict[new_col_name] = pd.NA
+    
+    df_new = pd.DataFrame(new_cols_dict, index=mismatch_sync.index)
+    
+    # Concatenate: before + new + after
+    mismatch_sync = pd.concat([df_before, df_new, df_after], axis=1)
     
     cu.info(f"Added {cols_to_add} new columns before ATTR_USER_KEY")
 
@@ -102,6 +109,7 @@ i_user_key = cols.index("ATTR_USER_KEY")
 group_cols = cols[i_groups:i_user_key]
 
 cu.info(f"Total group columns available: {len(group_cols)}")
+cu.info(f"ATTR_USER_KEY is now at position: {i_user_key}")
 
 for row_idx in mismatch_sync.index:
     email = mismatch_sync.at[row_idx, "ATTR_EMAIL"]
@@ -134,3 +142,12 @@ for row_idx in mismatch_sync.index:
 mismatch_sync = mismatch_sync.copy()
 
 cu.success("Finished appending GAD groups into mismatch_sync.")
+
+# Verify the column order
+cu.info("Verifying column order...")
+final_cols = list(mismatch_sync.columns)
+final_i_groups = final_cols.index("ATTR_GROUPS")
+final_i_user_key = final_cols.index("ATTR_USER_KEY")
+cu.info(f"ATTR_GROUPS at position: {final_i_groups}")
+cu.info(f"ATTR_USER_KEY at position: {final_i_user_key}")
+cu.info(f"Group columns between them: {final_i_user_key - final_i_groups}")
